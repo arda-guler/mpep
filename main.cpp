@@ -1071,10 +1071,16 @@ std::pair<std::vector<Vec3>, double> propagateToNextMidnight(Vec3 p0, Vec3 v0, S
     return { propagate(p0, v0, t0, t1, -1), JD_1 };
 }
 
-std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> generateEphemeris(SpiceDouble t0, Vec3 p0, Vec3 v0, std::vector<SpiceDouble> ts)
+std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+    std::vector<double>, std::vector<double>, std::vector<double>> generateEphemeris(SpiceDouble t0, Vec3 p0, Vec3 v0, std::vector<SpiceDouble> ts)
 {
     std::vector<double> RA_result;
     std::vector<double> DEC_result;
+    std::vector<double> range_result;
+    std::vector<double> RA_rate_result;
+    std::vector<double> DEC_rate_result;
+
+    double eps_rate = 60; // [s], time for numerical RA-DEC rate calculation
 
     for (int idx_tdiff = 0; idx_tdiff < ts.size(); idx_tdiff++)
     {
@@ -1082,23 +1088,70 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         {
             std::vector<Vec3> sv_prop = propagate(p0, v0, t0, ts[idx_tdiff], -1);
             Vec3 p_t = sv_prop[0];
+            Vec3 v_t = sv_prop[1];
             std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_t);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            SpiceDouble state[6], lt;
+            spkezr_c("EARTH", ts[idx_tdiff], "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
+            Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
+
+            double range = (p_t - earth_pos).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else if (ts[idx_tdiff] == t0) // the date is epoch date
         {
             std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p0);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            SpiceDouble state[6], lt;
+            spkezr_c("EARTH", t0, "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
+            Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
+
+            double range = (p0 - earth_pos).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p0, v0, t0, t0 + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getGeocentricRADEC(t0 + eps_rate, p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else
         {
             std::vector<Vec3> sv_prop = backpropagate(p0, v0, t0, ts[idx_tdiff], 1);
             Vec3 p_t = sv_prop[0];
+            Vec3 v_t = sv_prop[1];
             std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_t);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            SpiceDouble state[6], lt;
+            spkezr_c("EARTH", ts[idx_tdiff], "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
+            Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
+
+            double range = (p_t - earth_pos).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
     }
 
@@ -1106,6 +1159,9 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
     std::vector<std::string> RA_hms;
     std::vector<std::string> DEC_Dms;
     std::vector<std::string> dates;
+    std::vector<double> ranges;
+    std::vector<double> RA_rate_arcsec_per_min;
+    std::vector<double> DEC_rate_arcsec_per_min;
 
     for (int idx_result = 0; idx_result < RA_result.size(); idx_result++)
     {
@@ -1114,16 +1170,27 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         dates.push_back(utcstr);
         RA_hms.push_back(RATohms(RA_result[idx_result]));
         DEC_Dms.push_back(DECToDms(DEC_result[idx_result]));
+        ranges.push_back(range_result[idx_result] / AU);
+        RA_rate_arcsec_per_min.push_back(RA_rate_result[idx_result] * 3600 * 60); // convert from [deg s-1] to [arcsec min-1]
+        DEC_rate_arcsec_per_min.push_back(DEC_rate_result[idx_result] * 3600 * 60); // convert from [deg s-1] to [arcsec min-1]
     }
 
-    return std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> {dates, RA_hms, DEC_Dms};
+    return std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+        std::vector<double>, std::vector<double>, std::vector<double>> {dates, RA_hms, DEC_Dms, ranges, 
+        RA_rate_arcsec_per_min, DEC_rate_arcsec_per_min};
 }
 
-std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> generateEphemerisObsv
+std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>, 
+    std::vector<double>, std::vector<double>, std::vector<double>> generateEphemerisObsv
     (SpiceDouble t0, Vec3 p0, Vec3 v0, std::vector<SpiceDouble> ts, std::string obscode, std::unordered_map<std::string, Observatory> obscode_map)
 {
     std::vector<double> RA_result;
     std::vector<double> DEC_result;
+    std::vector<double> range_result;
+    std::vector<double> RA_rate_result;
+    std::vector<double> DEC_rate_result;
+
+    double eps_rate = 60;
 
     for (int idx_tdiff = 0; idx_tdiff < ts.size(); idx_tdiff++)
     {
@@ -1131,23 +1198,58 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         {
             std::vector<Vec3> sv_prop = propagate(p0, v0, t0, ts[idx_tdiff], -1);
             Vec3 p_t = sv_prop[0];
+            Vec3 v_t = sv_prop[1];
             std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_t);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            double range = (p_t - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else if (ts[idx_tdiff] == t0) // the date is epoch date
         {
             std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p0);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            double range = (p0 - getObserverPos(obscode_map[obscode], t0)).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p0, v0, t0, t0 + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getRADEC(t0, obscode_map[obscode], p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else
         {
             std::vector<Vec3> sv_prop = backpropagate(p0, v0, t0, ts[idx_tdiff], 1);
             Vec3 p_t = sv_prop[0];
+            Vec3 v_t = sv_prop[0];
             std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_t);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
+
+            // get range
+            double range = (p_t - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
+            range_result.push_back(range);
+
+            // get rates
+            std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
+            Vec3 p_t2 = sv_prop2[0];
+            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_t2);
+            RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
+            DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
     }
 
@@ -1155,6 +1257,9 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
     std::vector<std::string> RA_hms;
     std::vector<std::string> DEC_Dms;
     std::vector<std::string> dates;
+    std::vector<double> ranges;
+    std::vector<double> RA_rate_arcsec_per_min;
+    std::vector<double> DEC_rate_arcsec_per_min;
 
     for (int idx_result = 0; idx_result < RA_result.size(); idx_result++)
     {
@@ -1163,12 +1268,18 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         dates.push_back(utcstr);
         RA_hms.push_back(RATohms(RA_result[idx_result]));
         DEC_Dms.push_back(DECToDms(DEC_result[idx_result]));
+        ranges.push_back(range_result[idx_result] / AU);
+        RA_rate_arcsec_per_min.push_back(RA_rate_result[idx_result] * 3600 * 60); // convert from [deg s-1] to [arcsec min-1]
+        DEC_rate_arcsec_per_min.push_back(DEC_rate_result[idx_result] * 3600 * 60); // convert from [deg s-1] to [arcsec min-1]
     }
 
-    return std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> {dates, RA_hms, DEC_Dms};
+    return std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+        std::vector<double>, std::vector<double>, std::vector<double>> {dates, RA_hms, DEC_Dms, ranges,
+        RA_rate_arcsec_per_min, DEC_rate_arcsec_per_min};
 }
 
-std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> generateEphemerisMPEC(Vec3 p0, Vec3 v0, SpiceDouble epoch_et)
+std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+    std::vector<double>, std::vector<double>, std::vector<double>> generateEphemerisMPEC(Vec3 p0, Vec3 v0, SpiceDouble epoch_et)
 {
     // get today's date with clock at midnight
     std::time_t now = std::time(nullptr);
@@ -1205,18 +1316,22 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
 }
 
 void printEphemeris(std::string designation, std::string obscode, std::string obscode_name, 
-    std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> ephem_data,
+    std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+    std::vector<double>, std::vector<double>, std::vector<double>> ephem_data,
     std::ostream& out = std::cout)
 {
     std::string date_init = std::get<0>(ephem_data)[0];
     std::string date_final = std::get<0>(ephem_data).back();
     out << "\nEphemeris for " << designation << " between " << date_init << " and " << date_final
         << " for observatory " << obscode << " (" << obscode_name << "):\n\n";
-    out << "Date-Time                R.A. (J2000) Decl.\n";
+    out << "Date-Time                R.A. (J2000) Decl.       Range (AU)   RA rate (\"/min)  DEC rate (\"/min)\n";
 
     for (int idx_ephem = 0; idx_ephem < std::get<0>(ephem_data).size(); idx_ephem++)
     {
-        out << std::get<0>(ephem_data)[idx_ephem] << "   " << std::get<1>(ephem_data)[idx_ephem] << "   " << std::get<2>(ephem_data)[idx_ephem] << "\n";
+        out << std::get<0>(ephem_data)[idx_ephem] << "   " << std::get<1>(ephem_data)[idx_ephem] << "   " << std::get<2>(ephem_data)[idx_ephem] << "     " 
+            << std::fixed << std::setprecision(6) << std::get<3>(ephem_data)[idx_ephem] << "        "
+            << std::fixed << std::setprecision(6) << std::get<4>(ephem_data)[idx_ephem] << "       "
+            << std::fixed << std::setprecision(6) << std::get<5>(ephem_data)[idx_ephem] << "\n";
     }
 
     out << "\nEnd of ephemeris output.\n";
@@ -1239,7 +1354,7 @@ void printHelpMsg()
 
 int main(int argc, char* argv[])
 {
-    std::cout << "MPEP v0.1.0\n\n";
+    std::cout << "MPEP v0.2.0\n\n";
 
     // default parameters
     std::string mp_path = "mp.json";
@@ -1412,7 +1527,7 @@ int main(int argc, char* argv[])
             // we are reading datetime parameters from arguments
             SpiceDouble et0, etf;
             str2et_c(date_init.c_str(), &et0);
-            str2et_c(date_init.c_str(), &etf);
+            str2et_c(date_final.c_str(), &etf);
 
             SpiceDouble c_et = et0;
             while (c_et < etf)
@@ -1428,7 +1543,8 @@ int main(int argc, char* argv[])
         ts = readDateFile(in_path);
     }
 
-    std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>> ephem_data;
+    std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::string>,
+        std::vector<double>, std::vector<double>, std::vector<double>> ephem_data;
     if (!strcmp(user_obscode.c_str(), "Geocentric"))
     {
         ephem_data = generateEphemeris(t0, p0, v0, ts);
@@ -1440,8 +1556,6 @@ int main(int argc, char* argv[])
         // returns {date, RA, DEC}
     }
 
-    std::string debug = std::get<0>(ephem_data)[0]; // aint workin
-
     std::string desig = perm;
     if (!strcmp(perm.c_str(), ""))
     {
@@ -1449,6 +1563,15 @@ int main(int argc, char* argv[])
     }
 
     printEphemeris(desig, user_obscode, obscode_map[user_obscode].name, ephem_data);
+
+    // write to file
+    std::cout << "\nWriting output ephemeris to " << out_path << "... ";
+    std::ofstream outfile(out_path);
+    if (outfile.is_open())
+    {
+        printEphemeris(desig, user_obscode, obscode_map[user_obscode].name, ephem_data, outfile);
+        outfile.close();
+    }
 
     std::cout << "Done. Program end.\n";
 }
