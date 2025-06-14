@@ -1069,10 +1069,19 @@ std::vector<Vec3> computeTrueStateGeocentric(Vec3 pa, Vec3 va, SpiceDouble et_ob
     SpiceDouble obsv_sv[6];
     spkezr_c("EARTH", et_obs, "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", obsv_sv, &lt_ignore);
     Vec3 obsv_pos = Vec3(obsv_sv[0], obsv_sv[1], obsv_sv[2]); // this is known
+    Vec3 obsv_vel = Vec3(obsv_sv[3], obsv_sv[4], obsv_sv[5]);
 
     double c = 299792.458; // [km s-1] speed of light
 
-    Vec3 pt = pa;
+    Vec3 p_rel = pa - obsv_pos;
+    SpiceDouble pobj[3] = { p_rel.x, p_rel.y, p_rel.z };
+    SpiceDouble vobs[3] = { obsv_vel.x, obsv_vel.y, obsv_vel.z };
+    SpiceDouble corpos[3];
+    stlabx_c(pobj, vobs, corpos);  // <--- UNDO stellar aberration
+
+    Vec3 p_corr = obsv_pos + Vec3(corpos[0], corpos[1], corpos[2]);
+
+    Vec3 pt = p_corr;
     Vec3 vt = va;
 
     double lt = (pa - obsv_pos).mag() / c; // initial light time guess
@@ -1091,7 +1100,7 @@ std::vector<Vec3> computeTrueStateGeocentric(Vec3 pa, Vec3 va, SpiceDouble et_ob
         * Just use a linear approximation, it's good enough for nearly all cases
         *
         */
-        pt = pa + va * lt;
+        pt = p_corr + va * lt;
 
         lt = (pt - obsv_pos).mag() / c;
         double lt_err = abs(lt - lt_prev);
@@ -1147,16 +1156,36 @@ std::vector<Vec3> computeApparentStateGeocentric(Vec3 pt, Vec3 vt, SpiceDouble e
         lt_prev = lt;
     }
 
-    return { pa, va };
+    // now we know the so-called apparent position (apparent position corrected for light-time)
+    // now apply stellar aberration (not the same thing as so-called planetary abberation)
+    Vec3 p_rel = pa - obsv_pos;
+    SpiceDouble pobj[3] = { p_rel.x, p_rel.y, p_rel.z };
+    SpiceDouble vobs[3] = { obsv_sv[3], obsv_sv[4], obsv_sv[5] };
+    SpiceDouble apppos[3]; // stellar-aberration corrected position relative to observer
+    stelab_c(pobj, vobs, apppos);
+
+    Vec3 pa_corr = obsv_pos + Vec3(apppos[0], apppos[1], apppos[2]);
+
+    return { pa_corr, va };
 }
 
 // get true state vector at observation time given apparent position
 std::vector<Vec3> computeTrueState(Vec3 pa, Vec3 va, SpiceDouble et_obs, Observatory& obsv, double tol = 1, int MAXITER = 5)
 {
     Vec3 obsv_pos = getObserverPos(obsv, et_obs); // this is known
+    Vec3 obsv_vel = getObserverVel(obsv, et_obs);
     double c = 299792.458; // [km s-1] speed of light
 
-    Vec3 pt = pa;
+    // undo stellar aberration
+    Vec3 p_rel = pa - obsv_pos;
+    SpiceDouble pobj[3] = { p_rel.x, p_rel.y, p_rel.z };
+    SpiceDouble vobs[3] = { obsv_vel.x, obsv_vel.y, obsv_vel.z };
+    SpiceDouble corpos[3];
+    stlabx_c(pobj, vobs, corpos);  // <--- UNDO stellar aberration
+
+    Vec3 p_corr = obsv_pos + Vec3(corpos[0], corpos[1], corpos[2]);
+
+    Vec3 pt = p_corr;
     Vec3 vt = va;
 
     double lt = (pa - obsv_pos).mag() / c; // initial light time guess
@@ -1175,7 +1204,7 @@ std::vector<Vec3> computeTrueState(Vec3 pa, Vec3 va, SpiceDouble et_obs, Observa
         * Just use a linear approximation, it's good enough for nearly all cases
         *
         */
-        pt = pa + va * lt;
+        pt = p_corr + va * lt;
 
         lt = (pt - obsv_pos).mag() / c;
         double lt_err = abs(lt - lt_prev);
@@ -1228,7 +1257,18 @@ std::vector<Vec3> computeApparentState(Vec3 pt, Vec3 vt, SpiceDouble et_obs, Obs
         lt_prev = lt;
     }
 
-    return { pa, va };
+    // now we know the so-called apparent position (apparent position corrected for light-time)
+    // now apply stellar aberration (not the same thing as so-called planetary abberation)
+    Vec3 obsv_vel = getObserverVel(obsv, et_obs);
+    Vec3 p_rel = pa - obsv_pos;
+    SpiceDouble pobj[3] = { p_rel.x, p_rel.y, p_rel.z };
+    SpiceDouble vobs[3] = { obsv_vel.x, obsv_vel.y, obsv_vel.z };
+    SpiceDouble apppos[3]; // stellar-aberration corrected position relative to observer
+    stelab_c(pobj, vobs, apppos);
+
+    Vec3 pa_corr = obsv_pos + Vec3(apppos[0], apppos[1], apppos[2]);
+
+    return { pa_corr, va };
 }
 
 std::pair<std::vector<Vec3>, double> propagateToNextMidnight(Vec3 p0, Vec3 v0, SpiceDouble t0)
