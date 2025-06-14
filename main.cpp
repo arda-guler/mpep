@@ -1062,6 +1062,175 @@ std::vector<Vec3> backpropagate(Vec3 p0, Vec3 v0, SpiceDouble date_init, SpiceDo
 }
 // --- --- --- ORBIT PROPAGATION --- --- --- [END]
 
+// get true state vector at observation time given apparent position
+std::vector<Vec3> computeTrueStateGeocentric(Vec3 pa, Vec3 va, SpiceDouble et_obs, double tol = 1, int MAXITER = 5)
+{
+    SpiceDouble lt_ignore;
+    SpiceDouble obsv_sv[6];
+    spkezr_c("EARTH", et_obs, "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", obsv_sv, &lt_ignore);
+    Vec3 obsv_pos = Vec3(obsv_sv[0], obsv_sv[1], obsv_sv[2]); // this is known
+
+    double c = 299792.458; // [km s-1] speed of light
+
+    Vec3 pt = pa;
+    Vec3 vt = va;
+
+    double lt = (pa - obsv_pos).mag() / c; // initial light time guess
+    double lt_prev = 0;
+    for (int idx_iter = 0; idx_iter < MAXITER; idx_iter++)
+    {
+
+        /*
+        *
+        *  Do NOT propagate this with a full orbit propagator! Way too expensive!
+        *
+        std::vector<Vec3> sv_true = propagate(pa, va, et_obs, et_obs + lt, -1);
+        pt = sv_true[0];
+        vt = sv_true[1];
+        *
+        * Just use a linear approximation, it's good enough for nearly all cases
+        *
+        */
+        pt = pa + va * lt;
+
+        lt = (pt - obsv_pos).mag() / c;
+        double lt_err = abs(lt - lt_prev);
+
+        if (lt_err < tol)
+        {
+            break;
+        }
+
+        lt_prev = lt;
+    }
+
+    return { pt, vt };
+}
+
+// get apparent position at given observation time and true position
+std::vector<Vec3> computeApparentStateGeocentric(Vec3 pt, Vec3 vt, SpiceDouble et_obs, double tol = 1, int MAXITER = 5)
+{
+    SpiceDouble lt_ignore;
+    SpiceDouble obsv_sv[6];
+    spkezr_c("EARTH", et_obs, "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", obsv_sv, &lt_ignore);
+    Vec3 obsv_pos = Vec3(obsv_sv[0], obsv_sv[1], obsv_sv[2]); // this is known
+    double c = 299792.458; // [km s-1] speed of light
+
+    Vec3 pa = pt;
+    Vec3 va = vt;
+
+    double lt = (pt - obsv_pos).mag() / c; // initial light time guess
+    double lt_prev = 0;
+    for (int idx_iter = 0; idx_iter < MAXITER; idx_iter++)
+    {
+        /*
+        *
+        * No no no, full propagation is too expensive for this inner iteration
+        *
+        std::vector<Vec3> sv_apparent = backpropagate(pt, vt, et_obs, et_obs - lt, -1);
+        pa = sv_apparent[0];
+        va = sv_apparent[1];
+        *
+        * just use linear approx., good enough for most cases
+        *
+        */
+        pa = pt - vt * lt;
+
+        lt = (pa - obsv_pos).mag() / c;
+        double lt_err = abs(lt - lt_prev);
+
+        if (lt_err < tol)
+        {
+            break;
+        }
+
+        lt_prev = lt;
+    }
+
+    return { pa, va };
+}
+
+// get true state vector at observation time given apparent position
+std::vector<Vec3> computeTrueState(Vec3 pa, Vec3 va, SpiceDouble et_obs, Observatory& obsv, double tol = 1, int MAXITER = 5)
+{
+    Vec3 obsv_pos = getObserverPos(obsv, et_obs); // this is known
+    double c = 299792.458; // [km s-1] speed of light
+
+    Vec3 pt = pa;
+    Vec3 vt = va;
+
+    double lt = (pa - obsv_pos).mag() / c; // initial light time guess
+    double lt_prev = 0;
+    for (int idx_iter = 0; idx_iter < MAXITER; idx_iter++)
+    {
+
+        /*
+        *
+        *  Do NOT propagate this with a full orbit propagator! Way too expensive!
+        *
+        std::vector<Vec3> sv_true = propagate(pa, va, et_obs, et_obs + lt, -1);
+        pt = sv_true[0];
+        vt = sv_true[1];
+        *
+        * Just use a linear approximation, it's good enough for nearly all cases
+        *
+        */
+        pt = pa + va * lt;
+
+        lt = (pt - obsv_pos).mag() / c;
+        double lt_err = abs(lt - lt_prev);
+
+        if (lt_err < tol)
+        {
+            break;
+        }
+
+        lt_prev = lt;
+    }
+
+    return { pt, vt };
+}
+
+// get apparent position at given observation time and true position
+std::vector<Vec3> computeApparentState(Vec3 pt, Vec3 vt, SpiceDouble et_obs, Observatory& obsv, double tol = 1, int MAXITER = 5)
+{
+    Vec3 obsv_pos = getObserverPos(obsv, et_obs); // this is known
+    double c = 299792.458; // [km s-1] speed of light
+
+    Vec3 pa = pt;
+    Vec3 va = vt;
+
+    double lt = (pt - obsv_pos).mag() / c; // initial light time guess
+    double lt_prev = 0;
+    for (int idx_iter = 0; idx_iter < MAXITER; idx_iter++)
+    {
+        /*
+        *
+        * No no no, full propagation is too expensive for this inner iteration
+        *
+        std::vector<Vec3> sv_apparent = backpropagate(pt, vt, et_obs, et_obs - lt, -1);
+        pa = sv_apparent[0];
+        va = sv_apparent[1];
+        *
+        * just use linear approx., good enough for most cases
+        *
+        */
+        pa = pt - vt * lt;
+
+        lt = (pa - obsv_pos).mag() / c;
+        double lt_err = abs(lt - lt_prev);
+
+        if (lt_err < tol)
+        {
+            break;
+        }
+
+        lt_prev = lt;
+    }
+
+    return { pa, va };
+}
+
 std::pair<std::vector<Vec3>, double> propagateToNextMidnight(Vec3 p0, Vec3 v0, SpiceDouble t0)
 {
     double JD_0 = etToJD(t0);
@@ -1087,9 +1256,13 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         if (ts[idx_tdiff] > t0)
         {
             std::vector<Vec3> sv_prop = propagate(p0, v0, t0, ts[idx_tdiff], -1);
+            std::vector<Vec3> sv_apparent = computeApparentStateGeocentric(sv_prop[0], sv_prop[1], ts[idx_tdiff]);
             Vec3 p_t = sv_prop[0];
             Vec3 v_t = sv_prop[1];
-            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_t);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+
+            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
@@ -1098,19 +1271,25 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
             spkezr_c("EARTH", ts[idx_tdiff], "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
             Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
 
-            double range = (p_t - earth_pos).mag(); // [km]
+            double range = (p_a - earth_pos).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentStateGeocentric(sv_prop2[0], sv_prop2[1], ts[idx_tdiff] + eps_rate);
+            Vec3 p_a2 = sv_apparent2[0];
+
+            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else if (ts[idx_tdiff] == t0) // the date is epoch date
         {
-            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p0);
+            std::vector<Vec3> sv_apparent = computeApparentStateGeocentric(p0, v0, ts[idx_tdiff]);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+
+            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
@@ -1119,22 +1298,28 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
             spkezr_c("EARTH", t0, "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
             Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
 
-            double range = (p0 - earth_pos).mag(); // [km]
+            double range = (p_a - earth_pos).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p0, v0, t0, t0 + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getGeocentricRADEC(t0 + eps_rate, p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentStateGeocentric(sv_prop2[0], sv_prop2[1], t0 + eps_rate);
+            Vec3 p_a2 = sv_apparent2[0];
+
+            std::vector<double> RADEC2 = getGeocentricRADEC(t0 + eps_rate, p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else
         {
             std::vector<Vec3> sv_prop = backpropagate(p0, v0, t0, ts[idx_tdiff], 1);
+            std::vector<Vec3> sv_apparent = computeApparentStateGeocentric(sv_prop[0], sv_prop[1], ts[idx_tdiff]);
             Vec3 p_t = sv_prop[0];
             Vec3 v_t = sv_prop[1];
-            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_t);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+
+            std::vector<double> RADEC = getGeocentricRADEC(ts[idx_tdiff], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
@@ -1143,13 +1328,15 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
             spkezr_c("EARTH", ts[idx_tdiff], "J2000", "NONE", "SOLAR SYSTEM BARYCENTER", state, &lt);
             Vec3 earth_pos = Vec3(state[0], state[1], state[2]);
 
-            double range = (p_t - earth_pos).mag(); // [km]
+            double range = (p_a - earth_pos).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentStateGeocentric(sv_prop2[0], sv_prop2[1], ts[idx_tdiff] + eps_rate);
+            Vec3 p_a2 = sv_apparent2[0];
+
+            std::vector<double> RADEC2 = getGeocentricRADEC(ts[idx_tdiff] + eps_rate, p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
@@ -1197,57 +1384,71 @@ std::tuple<std::vector<std::string>, std::vector<std::string>, std::vector<std::
         if (ts[idx_tdiff] > t0)
         {
             std::vector<Vec3> sv_prop = propagate(p0, v0, t0, ts[idx_tdiff], -1);
+            std::vector<Vec3> sv_apparent = computeApparentState(sv_prop[0], sv_prop[1], ts[idx_tdiff], obscode_map[obscode]);
             Vec3 p_t = sv_prop[0];
             Vec3 v_t = sv_prop[1];
-            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_t);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+
+            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
             // get range
-            double range = (p_t - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
+            double range = (p_a - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentState(sv_prop2[0], sv_prop2[1], ts[idx_tdiff] + eps_rate, obscode_map[obscode]);
+            Vec3 p_a2 = sv_apparent2[0];
+            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else if (ts[idx_tdiff] == t0) // the date is epoch date
         {
-            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p0);
+            std::vector<Vec3> sv_apparent = computeApparentState(p0, v0, t0, obscode_map[obscode]);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
             // get range
-            double range = (p0 - getObserverPos(obscode_map[obscode], t0)).mag(); // [km]
+            double range = (p_a - getObserverPos(obscode_map[obscode], t0)).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p0, v0, t0, t0 + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getRADEC(t0, obscode_map[obscode], p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentState(sv_prop2[0], sv_prop2[1], t0 + eps_rate, obscode_map[obscode]);
+            Vec3 p_a2 = sv_apparent2[0];
+            std::vector<double> RADEC2 = getRADEC(t0, obscode_map[obscode], p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
         else
         {
             std::vector<Vec3> sv_prop = backpropagate(p0, v0, t0, ts[idx_tdiff], 1);
+            std::vector<Vec3> sv_apparent = computeApparentState(sv_prop[0], sv_prop[1], ts[idx_tdiff], obscode_map[obscode]);
             Vec3 p_t = sv_prop[0];
             Vec3 v_t = sv_prop[0];
-            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_t);
+            Vec3 p_a = sv_apparent[0];
+            Vec3 v_a = sv_apparent[1];
+
+            std::vector<double> RADEC = getRADEC(ts[idx_tdiff], obscode_map[obscode], p_a);
             RA_result.push_back(RADEC[0]);
             DEC_result.push_back(RADEC[1]);
 
             // get range
-            double range = (p_t - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
+            double range = (p_a - getObserverPos(obscode_map[obscode], ts[idx_tdiff])).mag(); // [km]
             range_result.push_back(range);
 
             // get rates
             std::vector<Vec3> sv_prop2 = propagate(p_t, v_t, ts[idx_tdiff], ts[idx_tdiff] + eps_rate, -1);
-            Vec3 p_t2 = sv_prop2[0];
-            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_t2);
+            std::vector<Vec3> sv_apparent2 = computeApparentState(sv_prop2[0], sv_prop2[1], ts[idx_tdiff] + eps_rate, obscode_map[obscode]);
+            Vec3 p_a2 = sv_apparent2[0];
+            std::vector<double> RADEC2 = getRADEC(ts[idx_tdiff] + eps_rate, obscode_map[obscode], p_a2);
             RA_rate_result.push_back((RADEC2[0] - RADEC[0]) / eps_rate); // [deg s-1]
             DEC_rate_result.push_back((RADEC2[1] - RADEC[1]) / eps_rate); // [deg s-1]
         }
@@ -1354,7 +1555,7 @@ void printHelpMsg()
 
 int main(int argc, char* argv[])
 {
-    std::cout << "MPEP v0.2.0\n\n";
+    std::cout << "MPEP v0.3.0\n\n";
 
     // default parameters
     std::string mp_path = "mp.json";
