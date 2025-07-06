@@ -1,7 +1,6 @@
 #include <iostream>
 #include <string>
 #include <array>
-#include <windows.h>
 #include <vector>
 #include <algorithm>
 #include <ctime>
@@ -10,6 +9,13 @@
 #include <iomanip>
 #include <unordered_map>
 #include <algorithm>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 extern "C"
 {
@@ -281,6 +287,7 @@ using StateMatrix = std::array<std::array<std::array<double, 3>, 2>, 9>; // I do
 // --- --- --- MISC UTILS --- --- --- [START]
 void loadAllKernels(const std::string& directory)
 {
+#ifdef _WIN32
     std::string search_path = directory + "\\*.*";
     WIN32_FIND_DATAA fd;
     HANDLE hFind = ::FindFirstFileA(search_path.c_str(), &fd);
@@ -299,6 +306,32 @@ void loadAllKernels(const std::string& directory)
     } while (::FindNextFileA(hFind, &fd));
 
     ::FindClose(hFind);
+#else
+    DIR* dir = opendir(directory.c_str());
+    if (!dir) {
+        std::cerr << "Unable to open directory: " << directory << '\n';
+        return;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        std::string filename = entry->d_name;
+
+        // Skip "." and ".."
+        if (filename == "." || filename == "..") {
+            continue;
+        }
+
+        std::string filepath = directory + "/" + filename;
+
+        struct stat path_stat;
+        if (stat(filepath.c_str(), &path_stat) == 0 && S_ISREG(path_stat.st_mode)) {
+            furnsh_c(filepath.c_str());
+        }
+    }
+
+    closedir(dir);
+#endif
 }
 
 std::string trim(const std::string& str) // trim trailing/leading whitespace, nothing fancy, stole it from somewhere
@@ -1745,16 +1778,52 @@ void printEphemeris(std::string designation, std::string obscode, std::string ob
 
 void printHelpMsg()
 {
-    std::cout << " === MPEP HELP ===\n";
-    std::cout << "MPEP is an ephemeris generation software for minor planets in heliocentric orbit.\n\n";
-    std::cout << "It requires SPICE kernels, a minor planet data file in JSON format, ";
-    std::cout << "and an ObsCodes file which holds the observatory codes used by the MPC.\n\n";
-    std::cout << "The minimal invocation is merely 'mpep' - this assumes default locations for all files, which are:\n\n";
-    std::cout << "SPICE Folder:\n";
-    std::cout << "data/SPICE/\n";;
-    std::cout << "Minor Planet Center Observatory Codes:\n";
-    std::cout << "data/ObsCodes.dat\n\n";
-    std::cout << "MPEP was developed by H. A. Guler.\n\n";
+    std::cout << " === MPEP HELP ===\n\n";
+    std::cout << "MPEP is an ephemeris generation software for minor planets in heliocentric orbit. It computes the RA-DEC sky positions of objects "
+        << "between given dates at given intervals, as well as the elongation and phase of the object.\n\n";
+
+    std::cout << "It requires a minor planet data file in JSON format, some SPICE kernels "
+        << "and an ObsCodes file which holds the observatory codes used by the MPC.\n\n";
+
+    std::cout << "The minimal invocation is merely 'mpep' - this assumes defaults for all parameters, which are:\n\n";
+    std::cout << "    Input data file: mp.json\n";
+    std::cout << "    Ephemeris initial date: Today at 00:00 UTC\n";
+    std::cout << "    Ephemeris final date: Tomorrow at 00:00 UTC\n";
+    std::cout << "    Ephemeris step size: 1 hour\n";
+    std::cout << "    Ephemeris observatory: Geocentric\n";
+    std::cout << "    Date input file: None (Ignored)\n";
+    std::cout << "    SPICE Folder: data/SPICE/\n";
+    std::cout << "    MPC Observatory Codes file: data/ObsCodes.dat\n";
+    std::cout << "    Output filename: ephemeris.txt\n\n";
+
+    std::cout << "The parameters can be adjusted using the following arguments:\n";
+    std::cout << "    -mp: Minor planet data JSON file\n";
+    std::cout << "    -init_date: Ephemeris initial date (YYYY-MM-DDThh:mm:ss)\n";
+    std::cout << "    -final_date: Ephemeris final date (YYYY-MM-DDThh:mm:ss)\n";
+    std::cout << "    -step_day: Step size in days (cumulative with other step size parameters)\n";
+    std::cout << "    -step_hour: Step size in hours (cumulative with other step size parameters)\n";
+    std::cout << "    -step_minute: Step size in minutes (cumulative with other step size parameters)\n";
+    std::cout << "    -step_second: Step size in seconds (cumulative with other step size parameters)\n";
+    std::cout << "    -obscode: MPC observatory codes data filepath\n";
+    std::cout << "    -spice: SPICE kernels directory path\n";
+    std::cout << "    -inp: ephemeris date input filepath**\n";
+    std::cout << "    -out: ephemeris output filepath\n\n";
+
+    std::cout << "    ** If you use the '-inp' argument; initial date, final date and step size parameters will be ignored!\n\n";
+
+    std::cout << "Observatory code file contents can be found in MPC website --> https://www.minorplanetcenter.net/iau/lists/ObsCodes.html\n";
+    std::cout << "You can just copy the entire page into a text file.\n\n";
+
+    std::cout << "SPICE kernels can be obtained from NAIF --> https://naif.jpl.nasa.gov/pub/naif/generic_kernels/\n";
+    std::cout << "You can get whichever ones are most suitable, but please ensure you have at least the planet ephemerides kernel, a leapseconds kernel, "
+        << "a generic text PCK and a binary Earth PCK.\n If you do not know what to get, you can get the following:\n";
+    std::cout << "    de440.bsp (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440.bsp)\n";
+    std::cout << "    naif0012.tls (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls)\n";
+    std::cout << "    pck00011.tpc (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc)\n";
+    std::cout << "    earth_1962_240827_2124_combined.bpc (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/earth_1962_240827_2124_combined.bpc)\n";
+    std::cout << "        (the last one might get updated often, just pick one that looks like it)\n\n";
+
+    std::cout << "MPEP was developed by H. A. Guler.\n";
     std::cout << "MPEP is licensed under GNU General Public License version 2.0 (GPL-2.0 License)\n\n";
 }
 
